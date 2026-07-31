@@ -90,6 +90,7 @@ async function sendQRIS(ctx, n, school) {
     `👉 <b><a href="https://t.me/netstream_cloud">https://t.me/netstream_cloud</a></b> 👈\n\n` +
     `⚠️ <i>Kirim ke link Admin di atas, bukan di chat bot ini.</i>`;
 
+  // 1. Kirim QRIS ke pelanggan
   try {
     await ctx.replyWithPhoto(QRIS_URL, { caption, parse_mode: 'HTML' });
   } catch (err) {
@@ -97,7 +98,7 @@ async function sendQRIS(ctx, n, school) {
     await ctx.reply(caption, { parse_mode: 'HTML' }).catch(() => {});
   }
 
-  // Notifikasi ke Admin (dengan fallback anti-gagal 100%)
+  // 2. Kirim notifikasi ke Admin (di-await penuh sebelum serverless selesai)
   if (ADMIN_ID) {
     try {
       const adminText =
@@ -116,7 +117,6 @@ async function sendQRIS(ctx, n, school) {
       });
     } catch (err) {
       console.error('Admin sendMessage HTML err:', err.message);
-      // Fallback pesan polos jika format HTML crash
       try {
         await bot.telegram.sendMessage(
           ADMIN_ID,
@@ -211,6 +211,7 @@ export default async function handler(req, res) {
   const proto = req.headers['x-forwarded-proto'] || 'https';
   const base  = `${proto}://${host}`;
 
+  // GET: Halaman status & pendaftaran Webhook
   if (req.method === 'GET') {
     const wh = `${base}/api/index`;
     try { await bot.telegram.setWebhook(wh); } catch(e) {
@@ -219,14 +220,15 @@ export default async function handler(req, res) {
     return res.status(200).send(`OK Webhook: ${wh}`);
   }
 
+  // POST: Terima update dari Telegram Webhook
+  // PENTING: Jangan pasang `res` di handleUpdate agar Vercel TIDAK membekukan/kill proses secara prematur sebelum pengiriman pesan & notifikasi admin selesai!
   if (req.method === 'POST') {
     try {
-      await bot.handleUpdate(req.body, res);
+      await bot.handleUpdate(req.body);
     } catch (err) {
-      console.error('Update err:', err.message);
-      if (!res.headersSent) res.status(200).json({ ok: true });
+      console.error('Webhook handleUpdate error:', err.message);
     }
-    return;
+    return res.status(200).json({ ok: true });
   }
 
   res.status(200).send('OK');
