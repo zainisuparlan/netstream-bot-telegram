@@ -97,11 +97,41 @@ async function handleDevice(ctx, n) {
     `💳 *CARA BAYAR VIA QRIS:*\n` +
     `1. Scan kode QRIS di atas dengan M-Banking / E-Wallet _(GoPay, OVO, DANA, ShopeePay, LinkAja, BCA, Mandiri, dll)_.\n` +
     `2. Pastikan nominal tepat *Rp ${harga}*.\n\n` +
-    `📩 *KONFIRMASI PEMBAYARAN:*\n` +
-    `Setelah transfer berhasil, *kirimkan foto / screenshot Bukti Transfer* di chat ini.\n\n` +
-    `⚡ Tim kami akan segera memverifikasi dan mengaktifkan lisensi untuk *${schoolName}*. Terima kasih! 🙏`;
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `📩 *CARA KONFIRMASI SETELAH TRANSFER:*\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `Setelah transfer berhasil, segera kirimkan *foto/screenshot Bukti Transfer* langsung ke Admin kami:\n\n` +
+    `👇 *KLIK LINK DI BAWAH INI* 👇\n` +
+    `➡️ https://t.me/netstream_cloud ⬅️\n\n` +
+    `⚠️ *PENTING:* Kirim bukti transfer ke link di atas, *bukan di chat ini*. Admin akan langsung memverifikasi dan mengaktifkan lisensi *${schoolName}*. Terima kasih! 🙏`;
 
-  return ctx.replyWithPhoto(QRIS_URL, { caption, parse_mode: 'Markdown' });
+  // Kirim QRIS ke pelanggan
+  await ctx.replyWithPhoto(QRIS_URL, { caption, parse_mode: 'Markdown' });
+
+  // Langsung kirim notifikasi pesanan ke Admin
+  if (ADMIN_ID) {
+    try {
+      const customerName = `${ctx.from.first_name || ''} ${ctx.from.last_name || ''}`.trim() || '–';
+      const username = ctx.from.username ? `@${ctx.from.username}` : '_(Tanpa username)_';
+
+      const adminNotice =
+        `🛒 *PESANAN MASUK — MENUNGGU BUKTI TRANSFER!*\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `🏫 Sekolah   : *${schoolName}*\n` +
+        `👤 Nama      : *${customerName}*\n` +
+        `🏷 Username  : ${username}\n` +
+        `🆔 ID TG     : \`${uid}\`\n` +
+        `📱 Perangkat : *${n} Perangkat*\n` +
+        `💰 Tagihan   : *Rp ${harga}* / bulan\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `⏳ Pelanggan sedang diarahkan untuk mengirim bukti transfer ke *t.me/netstream_cloud*.\n` +
+        `Mohon standby untuk konfirmasi aktivasi lisensi.`;
+
+      await bot.telegram.sendMessage(ADMIN_ID, adminNotice, { parse_mode: 'Markdown' });
+    } catch (e) {
+      console.error('Notifikasi admin gagal:', e.message);
+    }
+  }
 }
 
 // ─── Command /start ────────────────────────────────────────────────────────
@@ -182,51 +212,19 @@ bot.action(/dev_(\d+|custom)/, async (ctx) => {
   return handleDevice(ctx, parseInt(ctx.match[1], 10));
 });
 
-// ─── Handler Bukti Pembayaran (Foto / Dokumen) ─────────────────────────────
+// ─── Handler: Pelanggan Salah Kirim Foto ke Bot ────────────────────────────
+// Bot tidak menerima bukti di sini — redirect ke Admin langsung
 bot.on(['photo', 'document'], async (ctx) => {
-  const uid   = ctx.from.id;
-  const state = getState(uid);
-
-  const schoolName  = state.schoolName || 'Belum tercatat';
-  const devicesInfo = state.devices ? `${state.devices} Perangkat` : 'Belum tercatat';
-  const priceInfo   = state.harga   ? `Rp ${state.harga}` : 'Belum tercatat';
-
-  // Balas ke pelanggan
-  await ctx.reply(
-    `✅ *Bukti Transfer Diterima!*\n\n` +
-    `Terima kasih *${schoolName}*, pembayaran Anda sedang kami verifikasi.\n` +
-    `Tim Wadah Guru akan segera menghubungi Anda untuk aktivasi lisensi. 🙏`,
+  return ctx.reply(
+    `⚠️ *Ups! Sepertinya Anda mengirim bukti transfer di sini.*\n\n` +
+    `Mohon kirimkan foto bukti transfer Anda *langsung ke Admin* melalui tautan berikut:\n\n` +
+    `👇 *KLIK LINK INI UNTUK KIRIM KE ADMIN* 👇\n` +
+    `➡️ https://t.me/netstream_cloud ⬅️\n\n` +
+    `Admin kami siap menerima dan memproses konfirmasi pembayaran Anda. Terima kasih! 🙏`,
     { parse_mode: 'Markdown' }
   );
-
-  // Notifikasi + forward ke Admin
-  if (ADMIN_ID) {
-    try {
-      const nama   = `${ctx.from.first_name || ''} ${ctx.from.last_name || ''}`.trim() || '–';
-      const uname  = ctx.from.username ? `@${ctx.from.username}` : 'Tanpa username';
-
-      const notice =
-        `🔔 *BUKTI TRANSFER BARU MASUK!*\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `🏫 Sekolah   : *${schoolName}*\n` +
-        `👤 Nama      : *${nama}*\n` +
-        `🏷 Username  : ${uname}\n` +
-        `🆔 ID TG     : \`${uid}\`\n` +
-        `📱 Perangkat : *${devicesInfo}*\n` +
-        `💰 Tagihan   : *${priceInfo}*\n\n` +
-        `👉 Silakan balas manual untuk aktivasi lisensi pelanggan.`;
-
-      if (ctx.message.photo) {
-        const fid = ctx.message.photo.at(-1).file_id;
-        await bot.telegram.sendPhoto(ADMIN_ID, fid, { caption: notice, parse_mode: 'Markdown' });
-      } else {
-        await bot.telegram.sendDocument(ADMIN_ID, ctx.message.document.file_id, { caption: notice, parse_mode: 'Markdown' });
-      }
-    } catch (e) {
-      console.error('Forward ke admin gagal:', e.message);
-    }
-  }
 });
+
 
 // ─── Vercel Serverless Handler ─────────────────────────────────────────────
 export default async function handler(req, res) {
