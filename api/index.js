@@ -74,9 +74,9 @@ async function sendQRIS(ctx, n, school) {
     `💰 Tagihan  : <b>Rp ${harga}/bulan</b>\n\n` +
     `💳 <b>BAYAR VIA QRIS DI ATAS</b>\n\n` +
     `📩 <b>KONFIRMASI PEMBAYARAN:</b>\n` +
-    `Setelah transfer, silakan kirim foto bukti transfer & nama sekolah ke Admin:\n` +
+    `Kirim foto bukti transfer, nama sekolah (${school}) & jumlah perangkat (${n} unit) ke Admin:\n` +
     `👉 <b><a href="https://t.me/netstream_cloud">https://t.me/netstream_cloud</a></b> 👈\n\n` +
-    `⚠️ <i>Kirim bukti ke link Admin di atas, bukan di chat bot ini.</i>`;
+    `⚠️ <i>Kirim ke link Admin di atas, bukan di chat bot ini.</i>`;
 
   try {
     await ctx.replyWithPhoto(QRIS_URL, { caption, parse_mode: 'HTML' });
