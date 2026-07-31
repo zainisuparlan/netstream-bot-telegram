@@ -84,7 +84,7 @@ async function sendQRIS(ctx, n, school) {
     await ctx.reply(caption, { parse_mode: 'HTML' }).catch(() => {});
   }
 
-  // Notif ke admin
+  // Notif ke admin (preview link dimatikan agar lebih rapi)
   if (ADMIN_ID) {
     try {
       await bot.telegram.sendMessage(
@@ -97,7 +97,7 @@ async function sendQRIS(ctx, n, school) {
         `📱 Unit    : <b>${n} Perangkat</b>\n` +
         `💰 Tagihan : <b>Rp ${harga}/bulan</b>\n\n` +
         `⏳ Menunggu bukti dari pelanggan via https://t.me/netstream_cloud`,
-        { parse_mode: 'HTML' }
+        { parse_mode: 'HTML', disable_web_page_preview: true }
       );
     } catch (err) {
       console.error('Admin msg err:', err.message);
