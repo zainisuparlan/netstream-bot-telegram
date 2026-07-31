@@ -11,7 +11,6 @@ const bot = new Telegraf(BOT_TOKEN);
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 function calculatePrice(n) {
-  if (n <= 0) return null;
   if (n === 1) return 50000;
   if (n === 2) return 100000;
   return 100000 + (n - 2) * 25000;
@@ -21,304 +20,215 @@ function rupiah(n) {
   return new Intl.NumberFormat('id-ID').format(n);
 }
 
-// ─── Keyboard Pilihan Perangkat ────────────────────────────────────────────
-function deviceKeyboard() {
-  return Markup.inlineKeyboard([
-    [
-      Markup.button.callback('1 Perangkat', 'dev_1'),
-      Markup.button.callback('2 Perangkat', 'dev_2'),
-      Markup.button.callback('3 Perangkat', 'dev_3'),
-    ],
-    [
-      Markup.button.callback('4 Perangkat', 'dev_4'),
-      Markup.button.callback('5 Perangkat', 'dev_5'),
-    ],
-    [Markup.button.callback('💬 Jumlah Lain? Ketik Angkanya', 'dev_custom')],
-  ]);
+function extractSchool(text) {
+  if (!text) return null;
+  // Cari "Sekolah: <nama>" di teks pesan (dengan atau tanpa *)
+  const m = text.match(/Sekolah:\s*\*?(.+?)(?:\*|\n|$)/i);
+  return m ? m[1].trim() : null;
 }
 
-// ─── Step 1: Minta Nama Sekolah (ForceReply) ───────────────────────────────
-// ForceReply = Telegram memaksa user untuk reply ke pesan ini
-// Sehingga kita bisa deteksi konteks tanpa menyimpan state
-async function askSchoolName(ctx) {
-  const name = ctx.from?.first_name || 'Bapak/Ibu';
-  return ctx.reply(
-    `Halo *${name}*! Selamat datang di layanan *Mitra Mandiri Wadah Guru* 🎓✨\n\n` +
-    `Terima kasih atas ketertarikan Sekolah Anda untuk bergabung dalam program Sponsorship.\n\n` +
-    `📝 *Ketikkan nama lengkap sekolah Anda:*`,
+// ─── Keyboard ──────────────────────────────────────────────────────────────
+const keyboard = Markup.inlineKeyboard([
+  [
+    Markup.button.callback('1️⃣ 1 Perangkat', 'dev_1'),
+    Markup.button.callback('2️⃣ 2 Perangkat', 'dev_2'),
+  ],
+  [
+    Markup.button.callback('3️⃣ 3 Perangkat', 'dev_3'),
+    Markup.button.callback('4️⃣ 4 Perangkat', 'dev_4'),
+  ],
+  [
+    Markup.button.callback('5️⃣ 5 Perangkat', 'dev_5'),
+    Markup.button.callback('🔢 Lainnya', 'dev_other'),
+  ],
+]);
+
+// ─── Step 1: Sambutan + Minta Nama Sekolah ─────────────────────────────────
+async function welcome(ctx) {
+  const first = ctx.from?.first_name || 'Bapak/Ibu';
+  await ctx.reply(
+    `Halo *${first}*! Selamat datang di *Mitra Mandiri Wadah Guru* 🎓\n\n` +
+    `📝 Ketikkan *nama lengkap sekolah* Anda:`,
     {
       parse_mode: 'Markdown',
-      reply_markup: {
-        force_reply: true,
-        input_field_placeholder: 'Contoh: SDN 01 Maju Bersama'
-      }
+      reply_markup: { force_reply: true, input_field_placeholder: 'Contoh: SDN 01 Maju Bersama' }
     }
   );
 }
 
-// ─── Step 2: Simpan Nama Sekolah di Teks Pesan + Tampilkan Tombol ──────────
-// Nama sekolah di-embed dalam teks pesan agar bisa dibaca saat tombol diklik
-async function askDeviceCount(ctx, schoolName) {
-  return ctx.reply(
-    `✅ Nama sekolah: *${schoolName}*\n\n` +
-    `👉 *Berapa jumlah perangkat yang ingin didaftarkan?*\n` +
-    `_(Pilih tombol di bawah atau ketik angkanya langsung)_`,
-    { parse_mode: 'Markdown', ...deviceKeyboard() }
+// ─── Step 2: Sekolah tercatat, tampilkan tombol perangkat ─────────────────
+async function showDevices(ctx, school) {
+  await ctx.reply(
+    `✅ Sekolah: *${school}*\n\n` +
+    `Pilih jumlah perangkat yang ingin didaftarkan:`,
+    { parse_mode: 'Markdown', ...keyboard }
   );
 }
 
-// ─── Step 3: Kirim QRIS + Notifikasi Admin ─────────────────────────────────
-async function handleDevice(ctx, n, schoolName) {
+// ─── Step 3: Kirim QRIS + Notif Admin ────────────────────────────────────
+async function sendQRIS(ctx, n, school) {
   const price = calculatePrice(n);
-  if (!price) return ctx.reply('Masukkan angka perangkat yang valid (min. 1).');
-
   const harga = rupiah(price);
+  const uid = ctx.from?.id || '?';
+  const nama = `${ctx.from?.first_name || ''} ${ctx.from?.last_name || ''}`.trim() || '–';
+  const user = ctx.from?.username ? `@${ctx.from.username}` : '_(tanpa username)_';
 
   const caption =
-    `📌 *RINCIAN PENDAFTARAN LISENSI MITRA MANDIRI*\n` +
-    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `🏫 Nama Sekolah     : *${schoolName}*\n` +
-    `📱 Jumlah Perangkat : *${n} Perangkat*\n` +
-    `💰 Total Bayar      : *Rp ${harga}* / bulan\n` +
-    `_(Perpanjangan tetap sama seperti awal)_\n\n` +
-    `💳 *CARA BAYAR VIA QRIS:*\n` +
-    `1. Scan kode QRIS di atas dengan M-Banking / E-Wallet _(GoPay, OVO, DANA, ShopeePay, LinkAja, BCA, Mandiri, dll)_.\n` +
-    `2. Pastikan nominal tepat *Rp ${harga}*.\n\n` +
-    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `📩 *CARA KONFIRMASI SETELAH TRANSFER:*\n` +
-    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `Setelah transfer berhasil, segera kirimkan *foto/screenshot Bukti Transfer* langsung ke Admin:\n\n` +
-    `👇 *KLIK LINK INI UNTUK KIRIM KE ADMIN* 👇\n` +
+    `📌 *RINCIAN MITRA MANDIRI WADAH GURU*\n` +
+    `🏫 Sekolah  : *${school}*\n` +
+    `📱 Perangkat: *${n} unit*\n` +
+    `💰 Tagihan  : *Rp ${harga}/bulan*\n\n` +
+    `💳 *BAYAR VIA QRIS di atas*\n\n` +
+    `📩 *Setelah transfer, kirim bukti ke Admin:*\n` +
     `➡️ https://t.me/netstream_cloud ⬅️\n\n` +
-    `⚠️ *PENTING:* Kirim bukti di link atas, *bukan di chat ini*.\n` +
-    `Admin akan memverifikasi dan mengaktifkan lisensi *${schoolName}*. Terima kasih! 🙏`;
+    `⚠️ Kirim bukti ke link atas, BUKAN di sini!`;
 
-  // Kirim QRIS - dengan fallback teks jika foto gagal
   try {
     await ctx.replyWithPhoto(QRIS_URL, { caption, parse_mode: 'Markdown' });
-  } catch (photoErr) {
-    console.error('replyWithPhoto gagal:', photoErr.message);
-    // Fallback: kirim teks saja jika gambar gagal
-    try {
-      await ctx.reply(
-        caption + `\n\n🖼 _(Gambar QRIS sementara tidak dapat ditampilkan. Scan QRIS langsung saat konfirmasi ke Admin)_`,
-        { parse_mode: 'Markdown' }
-      );
-    } catch (textErr) {
-      console.error('reply teks juga gagal:', textErr.message);
-    }
+  } catch {
+    await ctx.reply(caption, { parse_mode: 'Markdown' });
   }
 
-  // Notifikasi ke Admin
-  if (ADMIN_ID) {
-    try {
-      const uid = ctx.from?.id;
-      const customerName = `${ctx.from.first_name || ''} ${ctx.from.last_name || ''}`.trim() || '–';
-      const username = ctx.from.username ? `@${ctx.from.username}` : '_(Tanpa username)_';
-
-      const adminNotice =
-        `🛒 *PESANAN MASUK — MENUNGGU BUKTI TRANSFER!*\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `🏫 Sekolah   : *${schoolName}*\n` +
-        `👤 Nama      : *${customerName}*\n` +
-        `🏷 Username  : ${username}\n` +
-        `🆔 ID TG     : \`${uid}\`\n` +
-        `📱 Perangkat : *${n} Perangkat*\n` +
-        `💰 Tagihan   : *Rp ${harga}* / bulan\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `⏳ Pelanggan diarahkan kirim bukti ke *t.me/netstream_cloud*.\n` +
-        `Mohon standby untuk konfirmasi aktivasi lisensi.`;
-
-      await bot.telegram.sendMessage(ADMIN_ID, adminNotice, { parse_mode: 'Markdown' });
-    } catch (e) {
-      console.error('Notifikasi admin gagal:', e.message);
-    }
-  }
+  // Notif ke admin
+  try {
+    await bot.telegram.sendMessage(ADMIN_ID,
+      `🛒 *PESANAN MASUK!*\n` +
+      `🏫 Sekolah : *${school}*\n` +
+      `👤 Nama    : *${nama}*\n` +
+      `🏷 User    : ${user}\n` +
+      `🆔 ID TG   : \`${uid}\`\n` +
+      `📱 Unit    : *${n} Perangkat*\n` +
+      `💰 Tagihan : *Rp ${harga}/bulan*\n\n` +
+      `⏳ Menunggu bukti dari pelanggan via t.me/netstream_cloud`,
+      { parse_mode: 'Markdown' }
+    );
+  } catch { /* silent */ }
 }
 
-// ─── Helper: Ekstrak nama sekolah dari teks pesan (robust) ───────────────────
-function extractSchoolName(text) {
-  if (!text) return null;
-  // Coba berbagai format (dengan atau tanpa markdown symbol *)
-  const patterns = [
-    /Nama sekolah:\s*\*([^\n*]+)\*/i,   // dengan asterisk bold
-    /Nama sekolah:\s*([^\n*]+)/i,        // tanpa asterisk
-  ];
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (match && match[1].trim().length > 1) return match[1].trim();
-  }
-  return null;
-}
+// ─── /start ────────────────────────────────────────────────────────────────
+bot.command('start', welcome);
 
-// ─── Command /start ────────────────────────────────────────────────────────
-bot.command('start', (ctx) => askSchoolName(ctx));
+// ─── Teks masuk ────────────────────────────────────────────────────────────
+bot.on('text', async (ctx) => {
+  const txt = ctx.message.text.trim();
+  const replyTo = ctx.message.reply_to_message?.text || '';
 
-// ─── Command /id ───────────────────────────────────────────────────────────
-bot.command('id', (ctx) =>
-  ctx.reply(`ID Anda: \`${ctx.from.id}\``, { parse_mode: 'Markdown' })
-);
-
-// ─── Text Handler ──────────────────────────────────────────────────────────
-bot.on('text', async (ctx, next) => {
-  const text = ctx.message.text.trim();
-
-  // Pesan pemicu dari Aplikasi Wadah Guru
-  const isTrigger =
-    text.toLowerCase().includes('wadah guru') ||
-    text.toLowerCase().includes('mitra mandiri') ||
-    text.toLowerCase().includes('sponsorship') ||
-    text.toLowerCase().includes('alokasi kuota');
-
-  if (isTrigger) {
-    return askSchoolName(ctx);
+  // Pemicu dari link aplikasi Wadah Guru
+  if (
+    txt.toLowerCase().includes('wadah guru') ||
+    txt.toLowerCase().includes('mitra mandiri') ||
+    txt.toLowerCase().includes('sponsorship') ||
+    txt.toLowerCase().includes('alokasi kuota')
+  ) {
+    return welcome(ctx);
   }
 
-  // STATELESS: Deteksi reply ke pesan "Ketikkan nama lengkap sekolah"
-  const replyText = ctx.message.reply_to_message?.text || '';
-  if (replyText.includes('nama lengkap sekolah')) {
-    if (text.length < 3) {
-      return ctx.reply(
-        '⚠️ Nama sekolah terlalu pendek. Mohon ketik nama lengkap sekolah Anda.',
-        { reply_markup: { force_reply: true } }
-      );
+  // Jawaban nama sekolah (reply ke force_reply "nama lengkap sekolah")
+  if (replyTo.includes('nama lengkap sekolah') || replyTo.includes('nama sekolah')) {
+    if (txt.length < 3) {
+      return ctx.reply('Nama sekolah terlalu pendek, ketik nama lengkapnya.', {
+        reply_markup: { force_reply: true }
+      });
     }
-    return askDeviceCount(ctx, text);
+    return showDevices(ctx, txt);
   }
 
-  // STATELESS: Deteksi reply ke pesan "Ketik angka jumlah perangkat"
-  if (replyText.includes('Ketik angka jumlah perangkat')) {
-    const schoolName = extractSchoolName(replyText);
-    const m = text.match(/^\d+$/);
-    if (m) {
-      const n = parseInt(m[0], 10);
-      if (n > 0 && n <= 999) return handleDevice(ctx, n, schoolName);
+  // Jawaban angka custom (reply ke force_reply "Lainnya")
+  if (replyTo.includes('Masukkan jumlah perangkat')) {
+    const school = extractSchool(replyTo) || '–';
+    const n = parseInt(txt, 10);
+    if (isNaN(n) || n <= 0 || n > 999) {
+      return ctx.reply('Masukkan angka yang valid (1-999).', { reply_markup: { force_reply: true } });
     }
-    return ctx.reply('Masukkan angka yang valid (contoh: 3 atau 10).', {
-      reply_markup: { force_reply: true }
-    });
+    return sendQRIS(ctx, n, school);
   }
 
-  // Fallback: input angka langsung jika ada konteks perangkat di history
-  const m = text.match(/^\d+$/);
-  if (m) {
-    const n = parseInt(m[0], 10);
+  // Input angka langsung
+  if (/^\d+$/.test(txt)) {
+    const n = parseInt(txt, 10);
     if (n > 0 && n <= 999) {
-      // Coba ambil nama sekolah dari pesan sebelumnya yang di-reply
-      const schoolName = extractSchoolName(replyText) || '–';
-      return handleDevice(ctx, n, schoolName);
+      return sendQRIS(ctx, n, '–');
     }
   }
-
-  return next();
 });
 
-// ─── Callback Tombol Perangkat ─────────────────────────────────────────────
-bot.action(/dev_(\d+|custom)/, async (ctx) => {
-  try {
-    await ctx.answerCbQuery();
+// ─── Callback Query (tombol inline keyboard) ───────────────────────────────
+bot.on('callback_query', async (ctx) => {
+  const data = ctx.callbackQuery?.data || '';
+  const msgText = ctx.callbackQuery?.message?.text || '';
+  const school = extractSchool(msgText) || '–';
 
-    // STATELESS: Baca nama sekolah dari teks pesan yang berisi tombol ini
-    const msgText = ctx.callbackQuery.message?.text || '';
-    const schoolName = extractSchoolName(msgText);
+  await ctx.answerCbQuery().catch(() => {});
 
-    if (!schoolName) {
-      return askSchoolName(ctx);
-    }
+  if (!data.startsWith('dev_')) return;
 
-  if (ctx.match[1] === 'custom') {
-    return ctx.reply(
-      `✅ Nama sekolah: *${schoolName}*\n\n` +
-      `Ketik angka jumlah perangkat yang Anda inginkan:\n_(Contoh: ketik *10*)_`,
+  const choice = data.replace('dev_', '');
+
+  if (choice === 'other') {
+    await ctx.reply(
+      `Sekolah: *${school}*\n\nMasukkan jumlah perangkat yang Anda inginkan:`,
       {
         parse_mode: 'Markdown',
-        reply_markup: {
-          force_reply: true,
-          input_field_placeholder: 'Contoh: 10'
-        }
+        reply_markup: { force_reply: true, input_field_placeholder: 'Contoh: 10' }
       }
     );
+    return;
   }
 
-    return handleDevice(ctx, parseInt(ctx.match[1], 10), schoolName);
-  } catch (err) {
-    console.error('Callback error:', err.message);
-    try {
-      await ctx.reply('⚠️ Terjadi gangguan sementara. Mohon coba klik tombol lagi atau ketik angka perangkat secara langsung.');
-    } catch(_) {}
+  const n = parseInt(choice, 10);
+  if (n > 0) {
+    await sendQRIS(ctx, n, school);
   }
 });
 
-// ─── Handler: Foto/Dokumen Salah Kirim ke Bot ─────────────────────────────
+// ─── Foto dikirim ke bot (salah tujuan) ─────────────────────────────────
 bot.on(['photo', 'document'], async (ctx) => {
-  return ctx.reply(
-    `⚠️ *Ups! Sepertinya Anda mengirim bukti transfer di sini.*\n\n` +
-    `Mohon kirimkan foto bukti transfer Anda *langsung ke Admin* melalui tautan berikut:\n\n` +
-    `👇 *KLIK LINK INI UNTUK KIRIM KE ADMIN* 👇\n` +
-    `➡️ https://t.me/netstream_cloud ⬅️\n\n` +
-    `Admin siap menerima dan memproses konfirmasi pembayaran Anda. Terima kasih! 🙏`,
+  await ctx.reply(
+    `⚠️ *Bukti transfer dikirim ke tempat yang salah!*\n\n` +
+    `Mohon kirim langsung ke Admin:\n` +
+    `➡️ https://t.me/netstream_cloud ⬅️`,
     { parse_mode: 'Markdown' }
   );
 });
 
-// ─── Vercel Serverless Handler ─────────────────────────────────────────────
+// ─── Vercel Handler ────────────────────────────────────────────────────────
 export default async function handler(req, res) {
   const host  = req.headers['host']              || 'localhost';
   const proto = req.headers['x-forwarded-proto'] || 'https';
   const base  = `${proto}://${host}`;
 
   if (req.method === 'GET') {
-    const webhookUrl = `${base}/api/index`;
-    try {
-      await bot.telegram.setWebhook(webhookUrl);
-    } catch (e) {
+    const wh = `${base}/api/index`;
+    try { await bot.telegram.setWebhook(wh); } catch(e) {
       return res.status(500).json({ ok: false, error: e.message });
     }
-    return res.status(200).send(`<!DOCTYPE html>
-<html lang="id">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Netstream Bot — Status</title>
-  <style>
-    *{margin:0;padding:0;box-sizing:border-box}
-    body{font-family:'Segoe UI',sans-serif;background:#0f172a;color:#f8fafc;
-         display:flex;min-height:100vh;align-items:center;justify-content:center;padding:20px}
-    .card{background:#1e293b;padding:36px 28px;border-radius:20px;
-          box-shadow:0 20px 40px rgba(0,0,0,.4);text-align:center;max-width:480px;width:100%}
-    .icon{font-size:52px;margin-bottom:12px}
-    h2{color:#38bdf8;font-size:22px;margin-bottom:6px}
-    .badge{background:#059669;color:#fff;padding:8px 20px;border-radius:20px;
-           font-weight:700;font-size:14px;display:inline-block;margin:14px 0}
-    .url{background:#0f172a;color:#34d399;padding:10px 14px;border-radius:10px;
-         font-size:12px;word-break:break-all;margin-top:10px}
-    hr{border-color:#334155;margin:18px 0}
-    p{color:#94a3b8;font-size:14px}
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div class="icon">🤖⚡</div>
-    <h2>Bot Telegram Wadah Guru</h2>
-    <p>Mitra Mandiri Auto-Responder</p>
-    <div class="badge">✅ Aktif 24 Jam di Vercel</div>
-    <hr>
-    <p>Webhook aktif di:</p>
-    <div class="url">${webhookUrl}</div>
-  </div>
-</body>
-</html>`);
+    return res.status(200).send(`<!DOCTYPE html><html lang="id">
+<head><meta charset="UTF-8"><title>Bot Wadah Guru</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:sans-serif;background:#0f172a;color:#f8fafc;display:flex;min-height:100vh;align-items:center;justify-content:center}
+.c{background:#1e293b;padding:32px;border-radius:16px;text-align:center;max-width:440px;width:90%}
+h2{color:#38bdf8;margin-bottom:8px}.b{background:#059669;color:#fff;padding:6px 16px;border-radius:20px;display:inline-block;margin:12px 0;font-weight:700}
+code{background:#0f172a;color:#34d399;padding:8px 12px;border-radius:8px;font-size:12px;word-break:break-all;display:block;margin-top:8px}
+</style></head>
+<body><div class="c"><div style="font-size:48px">🤖⚡</div>
+<h2>Bot Telegram Wadah Guru</h2>
+<p style="color:#94a3b8">Mitra Mandiri Auto-Responder</p>
+<div class="b">✅ Aktif 24 Jam</div>
+<hr style="border-color:#334155;margin:16px 0">
+<p style="color:#94a3b8;font-size:14px">Webhook aktif:</p>
+<code>${wh}</code></div></body></html>`);
   }
 
   if (req.method === 'POST') {
     try {
       await bot.handleUpdate(req.body, res);
     } catch (err) {
-      console.error('handleUpdate error:', err.message);
+      console.error(err.message);
       if (!res.headersSent) res.status(200).json({ ok: true });
     }
     return;
   }
 
-  return res.status(200).send('OK');
+  res.status(200).send('OK');
 }
