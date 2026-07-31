@@ -6,15 +6,23 @@ dotenv.config();
 const BOT_TOKEN = process.env.BOT_TOKEN || '8874951978:AAH7SoMNHC0g06vZemNdLmH9D7ILg1fVEYs';
 const ADMIN_ID  = process.env.ADMIN_ID  || '5036719692';
 
-// URL gambar QRIS langsung dari GitHub (agar tersedia di Vercel)
+// URL gambar QRIS dari GitHub (agar tersedia di Vercel)
 const QRIS_URL = 'https://raw.githubusercontent.com/zainisuparlan/netstream-bot-telegram/main/photo_2026-07-30_18-24-48.jpg';
 
 const bot = new Telegraf(BOT_TOKEN);
 
-// State sederhana per user
+// ─── State per-user ────────────────────────────────────────────────────────
+// step: 'IDLE' | 'WAITING_SCHOOL' | 'WAITING_DEVICES' | 'WAITING_PAYMENT'
 const userStates = new Map();
 
-// ─── Hitung Harga ──────────────────────────────────────────────────────────
+function getState(uid) {
+  return userStates.get(uid) || { step: 'IDLE' };
+}
+function setState(uid, data) {
+  userStates.set(uid, { ...getState(uid), ...data });
+}
+
+// ─── Helpers ───────────────────────────────────────────────────────────────
 function calculatePrice(n) {
   if (n <= 0) return null;
   if (n === 1) return 50000;
@@ -42,30 +50,47 @@ function deviceKeyboard() {
   ]);
 }
 
-// ─── Kirim Pesan Sambutan ──────────────────────────────────────────────────
-async function sendWelcome(ctx) {
+// ─── Step 1: Minta Nama Sekolah ────────────────────────────────────────────
+async function askSchoolName(ctx) {
   const name = ctx.from?.first_name || 'Bapak/Ibu';
-  const text =
+  setState(ctx.from.id, { step: 'WAITING_SCHOOL', schoolName: null, devices: null });
+
+  return ctx.reply(
     `Halo *${name}*! Selamat datang di layanan *Mitra Mandiri Wadah Guru* 🎓✨\n\n` +
     `Terima kasih atas ketertarikan Sekolah Anda untuk bergabung dalam program Sponsorship.\n\n` +
-    `👉 *Berapa jumlah perangkat yang ingin didaftarkan?*\n` +
-    `_(Pilih tombol di bawah atau ketik angkanya langsung)_`;
-
-  return ctx.reply(text, { parse_mode: 'Markdown', ...deviceKeyboard() });
+    `📝 *Mohon ketikkan nama lengkap sekolah Anda untuk memulai proses pendaftaran:*`,
+    { parse_mode: 'Markdown' }
+  );
 }
 
-// ─── Proses Pilihan Perangkat + Kirim QRIS ────────────────────────────────
+// ─── Step 2: Simpan Nama Sekolah, Tampilkan Pilihan Perangkat ─────────────
+async function askDeviceCount(ctx, schoolName) {
+  setState(ctx.from.id, { step: 'WAITING_DEVICES', schoolName });
+
+  return ctx.reply(
+    `✅ Nama sekolah tercatat: *${schoolName}*\n\n` +
+    `👉 *Berapa jumlah perangkat yang ingin didaftarkan?*\n` +
+    `_(Pilih tombol di bawah atau ketik angkanya langsung)_`,
+    { parse_mode: 'Markdown', ...deviceKeyboard() }
+  );
+}
+
+// ─── Step 3: Proses Pilihan Perangkat + Kirim QRIS ────────────────────────
 async function handleDevice(ctx, n) {
   const price = calculatePrice(n);
   if (!price) return ctx.reply('Masukkan angka perangkat yang valid (min. 1).');
 
   const harga = rupiah(price);
   const uid = ctx.from?.id;
-  if (uid) userStates.set(uid, { devices: n, price, harga });
+  const state = getState(uid);
+  const schoolName = state.schoolName || '–';
+
+  setState(uid, { step: 'WAITING_PAYMENT', devices: n, price, harga });
 
   const caption =
     `📌 *RINCIAN PENDAFTARAN LISENSI MITRA MANDIRI*\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `🏫 Nama Sekolah     : *${schoolName}*\n` +
     `📱 Jumlah Perangkat : *${n} Perangkat*\n` +
     `💰 Total Bayar      : *Rp ${harga}* / bulan\n` +
     `_(Perpanjangan tetap sama seperti awal)_\n\n` +
@@ -74,36 +99,60 @@ async function handleDevice(ctx, n) {
     `2. Pastikan nominal tepat *Rp ${harga}*.\n\n` +
     `📩 *KONFIRMASI PEMBAYARAN:*\n` +
     `Setelah transfer berhasil, *kirimkan foto / screenshot Bukti Transfer* di chat ini.\n\n` +
-    `⚡ Tim kami akan segera memverifikasi dan mengaktifkan lisensi sekolah Anda. Terima kasih! 🙏`;
+    `⚡ Tim kami akan segera memverifikasi dan mengaktifkan lisensi untuk *${schoolName}*. Terima kasih! 🙏`;
 
   return ctx.replyWithPhoto(QRIS_URL, { caption, parse_mode: 'Markdown' });
 }
 
 // ─── Command /start ────────────────────────────────────────────────────────
-bot.command('start', (ctx) => sendWelcome(ctx));
+bot.command('start', (ctx) => askSchoolName(ctx));
 
 // ─── Command /id ───────────────────────────────────────────────────────────
 bot.command('id', (ctx) =>
   ctx.reply(`ID Anda: \`${ctx.from.id}\``, { parse_mode: 'Markdown' })
 );
 
-// ─── Text Handler ──────────────────────────────────────────────────────────
+// ─── Text Handler (Multi-Step) ─────────────────────────────────────────────
 bot.on('text', async (ctx, next) => {
-  const t = ctx.message.text.trim().toLowerCase();
+  const uid  = ctx.from.id;
+  const text = ctx.message.text.trim();
+  const state = getState(uid);
 
-  // Pesan pemicu dari Aplikasi Wadah Guru
-  if (
-    t.includes('wadah guru') ||
-    t.includes('mitra mandiri') ||
-    t.includes('sponsorship') ||
-    t.includes('alokasi kuota')
-  ) {
-    return sendWelcome(ctx);
+  // Pesan pemicu dari Aplikasi Wadah Guru (awal percakapan)
+  const isTrigger =
+    text.toLowerCase().includes('wadah guru') ||
+    text.toLowerCase().includes('mitra mandiri') ||
+    text.toLowerCase().includes('sponsorship') ||
+    text.toLowerCase().includes('alokasi kuota');
+
+  if (isTrigger) {
+    return askSchoolName(ctx);
   }
 
-  // Input angka manual
-  const m = ctx.message.text.trim().match(/^\d+$/);
-  if (m) {
+  // Step: Menunggu nama sekolah
+  if (state.step === 'WAITING_SCHOOL') {
+    if (text.length < 3) {
+      return ctx.reply('Nama sekolah terlalu pendek, mohon ketik nama lengkap sekolah Anda.');
+    }
+    return askDeviceCount(ctx, text);
+  }
+
+  // Step: Menunggu input angka perangkat (jika sudah punya nama sekolah)
+  if (state.step === 'WAITING_DEVICES') {
+    const m = text.match(/^\d+$/);
+    if (m) {
+      const n = parseInt(m[0], 10);
+      if (n > 0 && n <= 999) return handleDevice(ctx, n);
+    }
+    return ctx.reply(
+      'Silakan pilih tombol perangkat di atas atau *ketik angka* jumlah perangkat yang Anda inginkan.',
+      { parse_mode: 'Markdown' }
+    );
+  }
+
+  // Fallback: Jika ada angka tanpa step (misal user kirim ulang)
+  const m = text.match(/^\d+$/);
+  if (m && state.schoolName) {
     const n = parseInt(m[0], 10);
     if (n > 0 && n <= 999) return handleDevice(ctx, n);
   }
@@ -111,44 +160,59 @@ bot.on('text', async (ctx, next) => {
   return next();
 });
 
-// ─── Callback Tombol ───────────────────────────────────────────────────────
+// ─── Callback Tombol Perangkat ─────────────────────────────────────────────
 bot.action(/dev_(\d+|custom)/, async (ctx) => {
   await ctx.answerCbQuery();
+  const uid   = ctx.from.id;
+  const state = getState(uid);
+
+  // Jika nama sekolah belum ada, minta dulu
+  if (!state.schoolName) {
+    return askSchoolName(ctx);
+  }
+
   if (ctx.match[1] === 'custom') {
+    setState(uid, { step: 'WAITING_DEVICES' });
     return ctx.reply(
       `Ketik *angka jumlah perangkat* yang Anda inginkan di chat ini.\n_(Contoh: ketik *10*)_`,
       { parse_mode: 'Markdown' }
     );
   }
+
   return handleDevice(ctx, parseInt(ctx.match[1], 10));
 });
 
-// ─── Handler Bukti Pembayaran ─────────────────────────────────────────────
+// ─── Handler Bukti Pembayaran (Foto / Dokumen) ─────────────────────────────
 bot.on(['photo', 'document'], async (ctx) => {
   const uid   = ctx.from.id;
-  const state = userStates.get(uid);
+  const state = getState(uid);
 
+  const schoolName  = state.schoolName || 'Belum tercatat';
+  const devicesInfo = state.devices ? `${state.devices} Perangkat` : 'Belum tercatat';
+  const priceInfo   = state.harga   ? `Rp ${state.harga}` : 'Belum tercatat';
+
+  // Balas ke pelanggan
   await ctx.reply(
     `✅ *Bukti Transfer Diterima!*\n\n` +
-    `Terima kasih, pembayaran Anda sedang kami verifikasi.\n` +
+    `Terima kasih *${schoolName}*, pembayaran Anda sedang kami verifikasi.\n` +
     `Tim Wadah Guru akan segera menghubungi Anda untuk aktivasi lisensi. 🙏`,
     { parse_mode: 'Markdown' }
   );
 
+  // Notifikasi + forward ke Admin
   if (ADMIN_ID) {
     try {
-      const nama = `${ctx.from.first_name || ''} ${ctx.from.last_name || ''}`.trim() || '–';
-      const uname = ctx.from.username ? `@${ctx.from.username}` : 'Tanpa username';
-      const devInfo = state ? `${state.devices} Perangkat` : 'Belum tercatat';
-      const priceInfo = state ? `Rp ${state.harga}` : 'Belum tercatat';
+      const nama   = `${ctx.from.first_name || ''} ${ctx.from.last_name || ''}`.trim() || '–';
+      const uname  = ctx.from.username ? `@${ctx.from.username}` : 'Tanpa username';
 
       const notice =
-        `🔔 *BUKTI TRANSFER MASUK!*\n` +
+        `🔔 *BUKTI TRANSFER BARU MASUK!*\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `🏫 Sekolah   : *${schoolName}*\n` +
         `👤 Nama      : *${nama}*\n` +
         `🏷 Username  : ${uname}\n` +
         `🆔 ID TG     : \`${uid}\`\n` +
-        `📱 Perangkat : *${devInfo}*\n` +
+        `📱 Perangkat : *${devicesInfo}*\n` +
         `💰 Tagihan   : *${priceInfo}*\n\n` +
         `👉 Silakan balas manual untuk aktivasi lisensi pelanggan.`;
 
@@ -164,13 +228,13 @@ bot.on(['photo', 'document'], async (ctx) => {
   }
 });
 
-// ─── Vercel Serverless Entry Point ────────────────────────────────────────
+// ─── Vercel Serverless Handler ─────────────────────────────────────────────
 export default async function handler(req, res) {
-  const host   = req.headers['host']              || 'localhost';
-  const proto  = req.headers['x-forwarded-proto'] || 'https';
-  const base   = `${proto}://${host}`;
+  const host  = req.headers['host']              || 'localhost';
+  const proto = req.headers['x-forwarded-proto'] || 'https';
+  const base  = `${proto}://${host}`;
 
-  // GET → pasang webhook & tampilkan status
+  // GET → pasang webhook + tampilkan halaman status
   if (req.method === 'GET') {
     const webhookUrl = `${base}/api/index`;
     try {
@@ -214,11 +278,9 @@ export default async function handler(req, res) {
 </html>`);
   }
 
-  // POST → proses update dari Telegram
+  // POST → proses update dari Telegram Webhook
   if (req.method === 'POST') {
     try {
-      // PENTING: teruskan 'res' ke handleUpdate agar Telegraf mengirim 200 OK
-      // setelah semua proses selesai — ini cara benar untuk serverless webhook
       await bot.handleUpdate(req.body, res);
     } catch (err) {
       console.error('handleUpdate error:', err.message);
