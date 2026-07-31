@@ -93,7 +93,21 @@ async function handleDevice(ctx, n, schoolName) {
     `⚠️ *PENTING:* Kirim bukti di link atas, *bukan di chat ini*.\n` +
     `Admin akan memverifikasi dan mengaktifkan lisensi *${schoolName}*. Terima kasih! 🙏`;
 
-  await ctx.replyWithPhoto(QRIS_URL, { caption, parse_mode: 'Markdown' });
+  // Kirim QRIS - dengan fallback teks jika foto gagal
+  try {
+    await ctx.replyWithPhoto(QRIS_URL, { caption, parse_mode: 'Markdown' });
+  } catch (photoErr) {
+    console.error('replyWithPhoto gagal:', photoErr.message);
+    // Fallback: kirim teks saja jika gambar gagal
+    try {
+      await ctx.reply(
+        caption + `\n\n🖼 _(Gambar QRIS sementara tidak dapat ditampilkan. Scan QRIS langsung saat konfirmasi ke Admin)_`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (textErr) {
+      console.error('reply teks juga gagal:', textErr.message);
+    }
+  }
 
   // Notifikasi ke Admin
   if (ADMIN_ID) {
@@ -122,11 +136,19 @@ async function handleDevice(ctx, n, schoolName) {
   }
 }
 
-// ─── Helper: Ekstrak nama sekolah dari teks pesan tombol ──────────────────
+// ─── Helper: Ekstrak nama sekolah dari teks pesan (robust) ───────────────────
 function extractSchoolName(text) {
-  if (!text) return '–';
-  const match = text.match(/Nama sekolah:\s*\*?([^\n*]+)\*?/i);
-  return match ? match[1].trim() : '–';
+  if (!text) return null;
+  // Coba berbagai format (dengan atau tanpa markdown symbol *)
+  const patterns = [
+    /Nama sekolah:\s*\*([^\n*]+)\*/i,   // dengan asterisk bold
+    /Nama sekolah:\s*([^\n*]+)/i,        // tanpa asterisk
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match && match[1].trim().length > 1) return match[1].trim();
+  }
+  return null;
 }
 
 // ─── Command /start ────────────────────────────────────────────────────────
@@ -193,15 +215,16 @@ bot.on('text', async (ctx, next) => {
 
 // ─── Callback Tombol Perangkat ─────────────────────────────────────────────
 bot.action(/dev_(\d+|custom)/, async (ctx) => {
-  await ctx.answerCbQuery();
+  try {
+    await ctx.answerCbQuery();
 
-  // STATELESS: Baca nama sekolah dari teks pesan yang berisi tombol ini
-  const msgText = ctx.callbackQuery.message?.text || '';
-  const schoolName = extractSchoolName(msgText);
+    // STATELESS: Baca nama sekolah dari teks pesan yang berisi tombol ini
+    const msgText = ctx.callbackQuery.message?.text || '';
+    const schoolName = extractSchoolName(msgText);
 
-  if (!schoolName || schoolName === '–') {
-    return askSchoolName(ctx);
-  }
+    if (!schoolName) {
+      return askSchoolName(ctx);
+    }
 
   if (ctx.match[1] === 'custom') {
     return ctx.reply(
@@ -217,7 +240,13 @@ bot.action(/dev_(\d+|custom)/, async (ctx) => {
     );
   }
 
-  return handleDevice(ctx, parseInt(ctx.match[1], 10), schoolName);
+    return handleDevice(ctx, parseInt(ctx.match[1], 10), schoolName);
+  } catch (err) {
+    console.error('Callback error:', err.message);
+    try {
+      await ctx.reply('⚠️ Terjadi gangguan sementara. Mohon coba klik tombol lagi atau ketik angka perangkat secara langsung.');
+    } catch(_) {}
+  }
 });
 
 // ─── Handler: Foto/Dokumen Salah Kirim ke Bot ─────────────────────────────
