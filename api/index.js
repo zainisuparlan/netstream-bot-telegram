@@ -9,6 +9,14 @@ const QRIS_URL  = 'https://raw.githubusercontent.com/zainisuparlan/netstream-bot
 
 const bot = new Telegraf(BOT_TOKEN);
 
+function escapeHTML(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 function calculatePrice(n) {
   if (n === 1) return 50000;
   if (n === 2) return 100000;
@@ -41,7 +49,7 @@ const keyboard = Markup.inlineKeyboard([
 ]);
 
 async function welcome(ctx) {
-  const first = ctx.from?.first_name || 'Bapak/Ibu';
+  const first = escapeHTML(ctx.from?.first_name || 'Bapak/Ibu');
   return ctx.reply(
     `Halo <b>${first}</b>! Selamat datang di <b>Mitra Mandiri Wadah Guru</b> 🎓\n\n` +
     `📝 Ketikkan <b>nama lengkap sekolah</b> Anda:`,
@@ -53,28 +61,32 @@ async function welcome(ctx) {
 }
 
 async function showDevices(ctx, school) {
+  const safeSchool = escapeHTML(school);
   return ctx.reply(
-    `✅ Sekolah: <b>${school}</b>\n\n` +
+    `✅ Sekolah: <b>${safeSchool}</b>\n\n` +
     `Pilih jumlah perangkat yang ingin didaftarkan:`,
     { parse_mode: 'HTML', ...keyboard }
   );
 }
 
 async function sendQRIS(ctx, n, school) {
+  const safeSchool = escapeHTML(school);
   const price = calculatePrice(n);
   const harga = rupiah(price);
   const uid = ctx.from?.id || '?';
-  const nama = `${ctx.from?.first_name || ''} ${ctx.from?.last_name || ''}`.trim() || '–';
-  const user = ctx.from?.username ? `@${ctx.from.username}` : '(tanpa username)';
+  const rawNama = `${ctx.from?.first_name || ''} ${ctx.from?.last_name || ''}`.trim() || '–';
+  const safeNama = escapeHTML(rawNama);
+  const rawUser = ctx.from?.username ? `@${ctx.from.username}` : '(tanpa username)';
+  const safeUser = escapeHTML(rawUser);
 
   const caption =
     `📌 <b>RINCIAN MITRA MANDIRI WADAH GURU</b>\n` +
-    `🏫 Sekolah  : <b>${school}</b>\n` +
+    `🏫 Sekolah  : <b>${safeSchool}</b>\n` +
     `📱 Perangkat: <b>${n} unit</b>\n` +
     `💰 Tagihan  : <b>Rp ${harga}/bulan</b>\n\n` +
     `💳 <b>BAYAR VIA QRIS DI ATAS</b>\n\n` +
     `📩 <b>KONFIRMASI PEMBAYARAN:</b>\n` +
-    `Kirim foto bukti transfer, nama sekolah (${school}) & jumlah perangkat (${n} unit) ke Admin:\n` +
+    `Kirim foto bukti transfer, nama sekolah (${safeSchool}) & jumlah perangkat (${n} unit) ke Admin:\n` +
     `👉 <b><a href="https://t.me/netstream_cloud">https://t.me/netstream_cloud</a></b> 👈\n\n` +
     `⚠️ <i>Kirim ke link Admin di atas, bukan di chat bot ini.</i>`;
 
@@ -85,23 +97,34 @@ async function sendQRIS(ctx, n, school) {
     await ctx.reply(caption, { parse_mode: 'HTML' }).catch(() => {});
   }
 
-  // Notif ke admin
+  // Notifikasi ke Admin (dengan fallback anti-gagal 100%)
   if (ADMIN_ID) {
     try {
-      await bot.telegram.sendMessage(
-        ADMIN_ID,
+      const adminText =
         `🛒 <b>PESANAN MASUK!</b>\n` +
-        `🏫 Sekolah : <b>${school}</b>\n` +
-        `👤 Nama    : <b>${nama}</b>\n` +
-        `🏷 User    : ${user}\n` +
+        `🏫 Sekolah : <b>${safeSchool}</b>\n` +
+        `👤 Nama    : <b>${safeNama}</b>\n` +
+        `🏷 User    : ${safeUser}\n` +
         `🆔 ID TG   : <code>${uid}</code>\n` +
         `📱 Unit    : <b>${n} Perangkat</b>\n` +
         `💰 Tagihan : <b>Rp ${harga}/bulan</b>\n\n` +
-        `⏳ Menunggu bukti & data dari pelanggan via https://t.me/netstream_cloud`,
-        { parse_mode: 'HTML', disable_web_page_preview: true }
-      );
+        `⏳ Menunggu bukti & data dari pelanggan via https://t.me/netstream_cloud`;
+
+      await bot.telegram.sendMessage(ADMIN_ID, adminText, {
+        parse_mode: 'HTML',
+        link_preview_options: { is_disabled: true }
+      });
     } catch (err) {
-      console.error('Admin msg err:', err.message);
+      console.error('Admin sendMessage HTML err:', err.message);
+      // Fallback pesan polos jika format HTML crash
+      try {
+        await bot.telegram.sendMessage(
+          ADMIN_ID,
+          `🛒 PESANAN MASUK!\n🏫 Sekolah : ${school}\n👤 Nama    : ${rawNama}\n🏷 User    : ${rawUser}\n🆔 ID TG   : ${uid}\n📱 Unit    : ${n} Perangkat\n💰 Tagihan : Rp ${harga}/bulan\n\n⏳ Menunggu bukti via https://t.me/netstream_cloud`
+        );
+      } catch (err2) {
+        console.error('Admin sendMessage fallback err:', err2.message);
+      }
     }
   }
 }
@@ -116,8 +139,9 @@ bot.action(/^dev_(\d+|other)$/, async (ctx) => {
     const school = extractSchool(msgText);
 
     if (match === 'other') {
+      const safeSchool = escapeHTML(school);
       return ctx.reply(
-        `Sekolah: <b>${school}</b>\n\nMasukkan jumlah perangkat yang Anda inginkan:`,
+        `Sekolah: <b>${safeSchool}</b>\n\nMasukkan jumlah perangkat yang Anda inginkan:`,
         {
           parse_mode: 'HTML',
           reply_markup: { force_reply: true, input_field_placeholder: 'Contoh: 10' }
