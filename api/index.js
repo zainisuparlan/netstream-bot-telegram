@@ -73,18 +73,10 @@ async function sendQRIS(ctx, n, school) {
     `📱 Perangkat: <b>${n} unit</b>\n` +
     `💰 Tagihan  : <b>Rp ${harga}/bulan</b>\n\n` +
     `💳 <b>BAYAR VIA QRIS DI ATAS</b>\n\n` +
-    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `📩 <b>PETUNJUK KONFIRMASI PEMBAYARAN:</b>\n` +
-    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `Setelah transfer berhasil, silakan kirimkan:\n` +
-    `1. 📄 <b>Bukti Transfer (Foto/Screenshot)</b>\n` +
-    `2. 🏫 <b>Nama Sekolah (${school})</b>\n` +
-    `3. 📱 <b>Jumlah Perangkat (${n} unit)</b>\n\n` +
-    `ke Admin melalui link Telegram berikut:\n\n` +
-    `👇👇 <b>KLIK LINK DI BAWAH UNTUK KONFIRMASI</b> 👇👇\n` +
-    `👉 <b><a href="https://t.me/netstream_cloud">https://t.me/netstream_cloud</a></b> 👈\n` +
-    `👆👆 <b>KLIK LINK DI ATAS UNTUK KONFIRMASI</b> 👆👆\n\n` +
-    `⚠️ <i>Kirim bukti & data di atas langsung ke link Admin di atas, BUKAN di chat bot ini!</i>`;
+    `📩 <b>KONFIRMASI PEMBAYARAN:</b>\n` +
+    `Setelah transfer, silakan kirim foto bukti transfer & nama sekolah ke Admin:\n` +
+    `👉 <b><a href="https://t.me/netstream_cloud">https://t.me/netstream_cloud</a></b> 👈\n\n` +
+    `⚠️ <i>Kirim bukti ke link Admin di atas, bukan di chat bot ini.</i>`;
 
   try {
     await ctx.replyWithPhoto(QRIS_URL, { caption, parse_mode: 'HTML' });
@@ -93,7 +85,7 @@ async function sendQRIS(ctx, n, school) {
     await ctx.reply(caption, { parse_mode: 'HTML' }).catch(() => {});
   }
 
-  // Notif ke admin (disable_web_page_preview agar ringkas & rapi)
+  // Notif ke admin
   if (ADMIN_ID) {
     try {
       await bot.telegram.sendMessage(
@@ -184,8 +176,7 @@ bot.on('text', async (ctx) => {
 bot.on(['photo', 'document'], async (ctx) => {
   return ctx.reply(
     `⚠️ <b>Bukti transfer dikirim ke tempat yang salah!</b>\n\n` +
-    `Mohon kirim Bukti Transfer + Nama Sekolah + Jumlah Perangkat langsung ke Admin:\n\n` +
-    `👇👇 <b>KLIK LINK DI BAWAH</b> 👇👇\n` +
+    `Mohon kirim Bukti Transfer & Nama Sekolah langsung ke Admin:\n` +
     `👉 <b><a href="https://t.me/netstream_cloud">https://t.me/netstream_cloud</a></b> 👈`,
     { parse_mode: 'HTML' }
   );
